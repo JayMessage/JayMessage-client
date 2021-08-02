@@ -1,0 +1,3 @@
+keyring
+zeep
+beautifulsoup4

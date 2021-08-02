@@ -34,6 +34,8 @@ from datetime import datetime
 
 versionstring = '0.1.0-alpha'
 
+print('JayMessage version ' + versionstring)
+
 def signal_handler(sig, frame): # lets us handle CTRL-C in a nice way
         print('Program was stopped manually.')
         sys.exit(0)

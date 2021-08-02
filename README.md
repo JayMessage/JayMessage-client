@@ -12,10 +12,10 @@ Currently, JayMessage doesn't do much besides read messages, but we intend to su
 | Features               | JayMessage | JPay App |
 |------------------------|------------|----------|
 | Viewing mail           | ✔️          | ✔️        |
-| Sending mail           | ❌(planned) | ✔️        |
-| Downloading mail       | ❌(planned) | ❌        |
-| Viewing VideoGrams     | ❌(planned) | ✔️        |
-| Downloading VideoGrams | ❌(planned) | ❌        |
+| Sending mail           | ✘(planned) | ✔️        |
+| Downloading mail       | ✘(planned) | ✘        |
+| Viewing VideoGrams     | ✘(planned) | ✔️        |
+| Downloading VideoGrams | ✘(planned) | ✘       |
 
 Once the desktop Python version is stable and reaches feature-parity with the official JPay app, we'd like to release for mobile platforms, such as Android.
 

@@ -27,10 +27,19 @@ from zeep.cache import SqliteCache
 from zeep.transports import Transport
 from bs4 import BeautifulSoup
 import sys
+import signal
 import time
 import keyring
+from datetime import datetime
 
+versionstring = '0.1.0-alpha'
+
+def signal_handler(sig, frame): # lets us handle CTRL-C in a nice way
+        print('Program was stopped manually.')
+        sys.exit(0)
+signal.signal(signal.SIGINT, signal_handler)
 transport = Transport(cache=SqliteCache())
+
 client = Client(
     'https://android.services.jpay.com/JPayCitizensWS/JPayCitizensService.asmx?wsdl', ## handles account operations, such as logging in
     transport=transport,
@@ -44,9 +53,6 @@ mailClient = Client(
 )
 
 client.transport.session.headers.update({'user-agent': 'ksoap2-android/2.6.0+;version=3.6.4'})
-
-print('JayMessage version 0.0.1')
-print('This software is in alpha.')
 
 def getCredentials(method): ## capture login creds from user interactively or from keyring
 
@@ -63,7 +69,7 @@ def getCredentials(method): ## capture login creds from user interactively or fr
                 
                 return(username, password, 'keyring') ## return credentials and source
             except:
-                print('Could not load credentials from keyring. Is this your first time using JayMessage?')
+                print('Could not load credentials from keyring. We\'ll ask if you want to save your credentials later.')
                 try:
                     f.close()
                 except:
@@ -173,78 +179,110 @@ stampDict = {}
 
 facilityStamps = BeautifulSoup(stampCountResponse.text, 'xml').find('StampCountByFacility')
 
-print('Retrieving data...')
-
-while facilityStamps != None:
-    facilityStampCount = int(facilityStamps.find('UStamps').text)
-    agencyName = facilityStamps.find('AgencyName').text.strip()
-    facilityStamps = facilityStamps.nextSibling
-
-    stampDict[agencyName] = facilityStampCount
+print('Retrieving messages...')
+mailParsingPasses = 0
+letterCount=0
 while True:
 
 ##    dataset = mailClient.service.GetCustomerInboxFolderByLetterAmount(inLoginDetails,userLoginID,retriveAfterThisLetter,'false','false',)
-    dataset = mailClient.service.GetCustomerInboxFolder(inLoginDetails,userLoginID,'false','false',)
-    mailList = BeautifulSoup(dataset.text, 'xml')
+    dataset          = mailClient.service.GetCustomerInboxFolder(inLoginDetails,userLoginID,'false','false',)
+    datasetArchived  = mailClient.service.GetCustomerInboxFolder(inLoginDetails,userLoginID,'true','false',)
+    mailList         = BeautifulSoup(dataset.text, 'xml')
+    archivedMailList = BeautifulSoup(datasetArchived.text, 'xml')
     mailProcessor = mailList.find('JPayUserEmailInbox')
-
-    letterCount=0
-##    print('Retrieving data...')
-    while mailProcessor != None: ## mailProcessor.nextSibling will return None if there is nothing next; this is an easy way to tell we're done
-        letterCount += 1
-        sentTime = mailProcessor.find('createdDate').text
-        recipientName = mailProcessor.find('sRecipientName').text
-        letterID = int(mailProcessor.find('uniqueID').text)
-##      readStatus = mailProcessor.find('ReadStatus').text
-
-        if mailProcessor.find('ReadStatus').text == '1': ## this makes much more sense to convert to bool
-            readStatus = True
-        else:
-            readStatus = False
-        
-        messageContent = mailProcessor.find('Message').text
-        inmateID = mailProcessor.find('sInmateID').text
-        facilityID = mailProcessor.find('iFacilityID').text
-##        emailHasAttachments = mailProcessor.find('EmailHasAttachments').text
-
-        if mailProcessor.find('EmailHasAttachments').text == '1': ## this makes much more sense to convert to bool
-            emailHasAttachments = True
-        elif mailProcessor.find('EmailHasAttachments').text == '0':
-            emailHasAttachments = False
-        else:
-            emailHasAttachments = True
-        
-        letterPreviewNameBase = 'letterPreview' + str(letterCount)
-        
-        try:
-            ## make a dict containing almost all letter info. doesn't cover archived (ancient) letters yet
-            newPreviewDict[letterPreviewNameBase + 'sentTime'] = sentTime
-            newPreviewDict[letterPreviewNameBase + 'recipientName'] = recipientName
-            newPreviewDict[letterPreviewNameBase + 'letterID'] = letterID
-            newPreviewDict[letterPreviewNameBase + 'readStatus'] = readStatus
-            newPreviewDict[letterPreviewNameBase + 'Message'] = messageContent
-            newPreviewDict[letterPreviewNameBase + 'inmateID'] = inmateID
-            newPreviewDict[letterPreviewNameBase + 'facilityID'] = facilityID
-            newPreviewDict[letterPreviewNameBase + 'emailHasAttachments'] = emailHasAttachments
-            letterList.append(letterID)
-            if readStatus == False: ## keep track of unread letters, to alert user later
-                unreadLetters.append(letterID)
-            mailProcessor = mailProcessor.nextSibling
-
-        except:
-            newPreviewDict = {} ## if the above failed, we probably don't have a dict yet
-            letterList = [] ## list of all letters in memory, by letter ID
-            unreadLetters = []
-            letterCount -= 1 ## this interation doesn't count
-
+    
     while True:
 
+        if mailParsingPasses == 1:
+            mailProcessor = archivedMailList.find('JPayUserEmailInbox')
+        elif mailParsingPasses == 2:
+            break
+
+        while mailProcessor != None: ## mailProcessor.nextSibling will return None if there is nothing next; this is an easy way to tell we're done
+            letterCount += 1
+            sentTime = mailProcessor.find('createdDate').text
+            recipientName = mailProcessor.find('sRecipientName').text
+            letterID = int(mailProcessor.find('uniqueID').text)
+
+            if mailProcessor.find('ReadStatus').text == '1': ## this makes much more sense to convert to bool
+                readStatus = True
+            else:
+                readStatus = False
+            
+            messageContent = mailProcessor.find('Message').text
+            inmateID = mailProcessor.find('sInmateID').text
+            facilityID = mailProcessor.find('iFacilityID').text
+
+            if mailProcessor.find('EmailHasAttachments').text == 'true': ## this makes much more sense to convert to bool
+                emailHasAttachments = True
+            elif mailProcessor.find('EmailHasAttachments').text == 'false':
+                emailHasAttachments = False
+            else:
+                emailHasAttachments = True
+            
+            letterPreviewNameBase = 'letterPreview' + str(letterCount)
+            
+            try:
+                newPreviewDict[letterPreviewNameBase + 'sentTime'] = sentTime
+                newPreviewDict[letterPreviewNameBase + 'recipientName'] = recipientName
+                newPreviewDict[letterPreviewNameBase + 'letterID'] = letterID
+                newPreviewDict[letterPreviewNameBase + 'readStatus'] = readStatus
+                newPreviewDict[letterPreviewNameBase + 'Message'] = messageContent
+                newPreviewDict[letterPreviewNameBase + 'inmateID'] = inmateID
+                newPreviewDict[letterPreviewNameBase + 'facilityID'] = facilityID
+                newPreviewDict[letterPreviewNameBase + 'emailHasAttachments'] = emailHasAttachments
+                letterList.append(letterID)
+                mailProcessor = mailProcessor.nextSibling
+                if mailProcessor == None:
+                    mailParsingPasses += 1
+                if readStatus == False: ## keep track of unread letters, to alert user later
+                    unreadLetters.append(letterID)
+
+            except:
+                newPreviewDict = {} ## if the above failed, we probably don't have a dict yet
+                letterList = [] ## list of all letters in memory, by letter ID
+                unreadLetters = []
+                letterCount -= 1 ## this interation doesn't count
+
+    print('Checking stamps...')
+    while facilityStamps != None:
+        facilityStampCount = int(facilityStamps.find('UStamps').text)
+        agencyName = facilityStamps.find('AgencyName').text.strip()
+        facilityStamps = facilityStamps.nextSibling
+
+        stampDict[agencyName] = facilityStampCount
+
+
+    print('Retrieving contacts...')
+    inmateListRaw = client.service.GetCitizenContactList(inLoginDetails,userLoginID)
+    inmateListxml = BeautifulSoup(inmateListRaw.text, 'xml').find('LimitedOffender')
+    contactDict = {}
+    while inmateListxml != None:
+        contactName = inmateListxml.find('FirstName').text + ' ' + inmateListxml.find('LastName').text
+        contactID = int(inmateListxml.find('InmateUniqueId').text)
+        inmateListxml = inmateListxml.nextSibling
+
+        contactDict[contactName] = contactID
+
+#        print('Checking VideoGrams...')
+##videoGramRequestRaw = mailClient.service.GetCustomerVMailLetterIDsFromMobile(inLoginDetails,'Mobile',userLoginID,'false','false',)
+##videoGramRequest = BeautifulSoup(videoGramRequestRaw.text, 'xml').find('StampCountByFacility')
+##        while videoGramRequest != None:
+            
+
+    while True:
         print(str(len(letterList)) + ' letters loaded.')
         print('You have ' + str(len(unreadLetters)) + ' unread messages.' + '\n')
         for i in stampDict:
             print(i + ' stamps: ' + str(stampDict[i]))
+            
+        print('\n' + 'Contacts:')
+        for i in contactDict:
+            print(str(i))
         
         print('Ready for commands. Type a number between 1-' + str(len(letterList)) + ' to view the message.')
+        print('Type \'a\' or \'archive\' to save all messages to a file.')
+        print('Type \'q\' or \'quit\' to exit.')
         print('> ',end='')
         selectedLetter = input().lower()
 
@@ -252,10 +290,40 @@ while True:
             print('Exiting.')
             sys.exit(0)
 
-        try:
+        elif (selectedLetter == 'a') or (selectedLetter == 'archive'):
+            archiveFile = open('jpay-archive-' + datetime.now().strftime('%Y-%m-%d-%H%M%S') + '.txt','w')
+            userInput = None
+            while userInput == None:
+                print('Archive will be saved to: ' +  archiveFile.name)
+                print('Is that okay? (Y/N): ',end='')
+                userInput = input().lower()
+                if userInput == 'y':
+                    q = len(letterList)
+                    archiveFile.write('JayMessage ' + versionstring + ' archive' + '-' + datetime.isoformat(datetime.now()) + '\n')
+                    for x in letterList:
 
-##            selectedMailContentResponse = mailClient.service.RetriveCustomerEmailDetails(inLoginDetails, selectedLetterID, False) ## retrieve content of message user selected
-##            selectedMailContent = BeautifulSoup(selectedMailContentResponse.text, 'xml')
+                        if newPreviewDict.get('letterPreview' + str(q) + 'emailHasAttachments') == False:
+                            humanReadableAttachmentStatus = 'No'
+                        else:
+                            humanReadableAttachmentStatus = 'Yes'
+                        
+                        archiveFile.write('-------------------------' + '\n')
+                        archiveFile.write('Sender: ' + newPreviewDict.get('letterPreview' + str(q) + 'recipientName') + '\n')
+                        archiveFile.write('Date: '   + newPreviewDict.get('letterPreview' + str(q) + 'sentTime') + '\n')
+                        archiveFile.write('Attachment: '   + humanReadableAttachmentStatus + '\n' + '\n')
+#                        archiveFile.write('Content:' + '\n' + '\n')
+                        archiveFile.write(newPreviewDict.get('letterPreview' + str(q) + 'Message') + '\n')
+#                        archiveFile.write('-------------------------' + '\n')
+                        q-= 1
+                    archiveFile.close()
+                    print('Archive saved.')
+                elif userInput == 'n':
+                    print('No archive will be created.')
+                else:
+                    print('Invalid entry.')
+                    userInput = None
+
+        elif 1 <= int(selectedLetter) <= len(letterList):
 
             print('-------------------------')
             print('Sender: ' + newPreviewDict.get('letterPreview' + selectedLetter + 'recipientName'))
@@ -264,10 +332,5 @@ while True:
             print(newPreviewDict.get('letterPreview' + selectedLetter + 'Message'))
             print('-------------------------')
 
-        except:
+        else:
             print('Please enter a valid command.')
-
-
-
-
-    
